@@ -1,4 +1,5 @@
 name: Cloud check in action
+
 on:
   push:
     branches:
@@ -8,6 +9,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: 35 2 * * *
+
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -17,10 +23,10 @@ jobs:
         run: sleep $((RANDOM % 301))
 
       - name: 🔌 Check out code
-        uses: actions/checkout@main
+        uses: actions/checkout@v5
 
       - name: 🔨 Setup Node.js environment
-        uses: actions/setup-node@main
+        uses: actions/setup-node@v5
         with:
           node-version: 18
           cache: npm
@@ -34,7 +40,7 @@ jobs:
         if: vars.cacheToken == '1'
         run: |
           echo "CACHE_TOKEN=1" >> $GITHUB_ENV
-      
+
       - name: 📹 Restore cached Cookie
         id: cache-cookie-restore
         if: vars.cacheToken == '1'
@@ -42,37 +48,57 @@ jobs:
         with:
           path: .token
           key: ${{ runner.os }}-cache-token
-    
+
+      # 只写入本项目需要的配置：优先读 environment 变量，读不到再回退到 secrets
       - name: 🔧 Init secrets
-        uses: shine1594/secrets-to-env-action@master
-        with:
-          secrets: ${{ toJSON(secrets) }}
-          secrets_env: production
-          prefix_prod: ""
-          file_name_prod: .env
+        env:
+          TY_ACCOUNTS: ${{ vars.TY_ACCOUNTS || secrets.TY_ACCOUNTS }}
+          TY_FAMILIES: ${{ vars.TY_FAMILIES || secrets.TY_FAMILIES }}
+          EXEC_THRESHOLD: ${{ vars.EXEC_THRESHOLD || secrets.EXEC_THRESHOLD }}
+          PUSH_PLUS_TOKEN: ${{ vars.PUSH_PLUS_TOKEN || secrets.PUSH_PLUS_TOKEN }}
+          SENDKEY: ${{ vars.SENDKEY || secrets.SENDKEY }}
+          TELEGRAM_BOT_TOKEN: ${{ vars.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHAT_ID }}
+          WECOM_BOT_KEY: ${{ vars.WECOM_BOT_KEY || secrets.WECOM_BOT_KEY }}
+          WECOM_BOT_TELPHONE: ${{ vars.WECOM_BOT_TELPHONE || secrets.WECOM_BOT_TELPHONE }}
+          WX_PUSHER_APP_TOKEN: ${{ vars.WX_PUSHER_APP_TOKEN || secrets.WX_PUSHER_APP_TOKEN }}
+          WX_PUSHER_UID: ${{ vars.WX_PUSHER_UID || secrets.WX_PUSHER_UID }}
+        run: |
+          : > .env
+          for v in TY_ACCOUNTS TY_FAMILIES EXEC_THRESHOLD PUSH_PLUS_TOKEN SENDKEY \
+                   TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID WECOM_BOT_KEY WECOM_BOT_TELPHONE \
+                   WX_PUSHER_APP_TOKEN WX_PUSHER_UID; do
+            val="$(printenv "$v" || true)"
+            if [ -n "$val" ]; then
+              printf '%s=%s\n' "$v" "$val" >> .env
+              echo "config: $v = set (${#val} chars)"
+            else
+              echo "config: $v = empty"
+            fi
+          done
 
       - name: 📡 Init dependencies
         run: npm install
 
       - name: 🚀 Run
-        uses: nick-fields/retry@master
+        uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
           max_attempts: 3
           command: npm start
 
+      # 保持仓库活跃，否则 60 天无提交会被 GitHub 自动停掉 schedule
       - name: 🚗 Keep Running
         if: github.event_name == 'schedule'
         run: |
           git config --local user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
           git config --local user.name "${{ github.actor }}"
-          git remote set-url origin https://${{ github.actor }}:${{ github.token }}@github.com/${{ github.repository }}
           git pull --rebase --autostash
           git commit --allow-empty -m "Keep Running..."
           git push
 
       - name: 🎉 Delete old workflow run
-        uses: Mattraks/delete-workflow-runs@main
+        uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
